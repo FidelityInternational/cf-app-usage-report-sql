@@ -43,8 +43,11 @@ To play around with the data in the `psql`:
  4. Start a psql: `make run_psql`
  5. Just copy&paste the queries from `generate_app_usage_report.sql`
 
-Tips developing: Try to filter the number of events in the very first view
-`last_month_app_usage_events` to have manageable number of events.
+Development tips
+------------------
+
+ * Try to filter the number of events in the very first view `last_month_app_usage_events` to have manageable number of events.
+ * To get into ccdb: `bosh ssh  -d cf_databases ccdb/0` and `sudo -u vcap -i /var/vcap/packages/postgres-9.6.3/bin/psql postgresql://localhost:3306/cloud_controller`
 
 Mathematics behind these queries
 --------------------------------
@@ -80,5 +83,12 @@ The idea is as follows, to sum the usage **per app `app_guid`**
 
 See the code and comments in `./generate_app_usage_report.sql` to see how this is implemented.
 
+Adding usage of existing apps without events
+--------------------------------------------
 
+It can happen that an app has been running constantly without any usage event in the last month.
+
+We must aggregate those too. For that, we query the table `processes` to get a list of all
+the existing apps. Later, in the computation, we check which apps have no events, and add
+a "fake event" at the begging of the window for it.
 

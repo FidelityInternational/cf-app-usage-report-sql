@@ -53,11 +53,26 @@ bosh \
     -c \"
         COPY (SELECT guid, created_at, instance_count, memory_in_mb_per_instance, state, app_guid, app_name, space_guid, space_name, org_guid, buildpack_guid, buildpack_name, package_state, parent_app_name, parent_app_guid, process_type, task_guid, task_name, package_guid, previous_state, previous_package_state, previous_memory_in_mb_per_instance, previous_instance_count FROM app_usage_events) TO '/tmp/app_usage_events.csv';
         COPY (SELECT guid, created_at, updated_at, name, billing_enabled, quota_definition_id, status, default_isolation_segment_guid FROM organizations) TO '/tmp/organizations.csv';
+
+        CREATE TEMPORARY VIEW existing_apps AS
+        SELECT
+            app_guid,
+            apps.name as app_name,
+            spaces.guid as space_guid,
+            spaces.name as space_name,
+            organizations.guid as org_guid,
+            memory,
+            instances,
+            state
+        FROM processes, apps, spaces, organizations
+        WHERE processes.app_guid = apps.guid
+        AND apps.space_guid = spaces.guid
+        AND spaces.organization_id = organizations.id;
+
+        COPY (SELECT * FROM existing_apps) TO '/tmp/existing_apps.csv';
     \";
 "
 mkdir -p $TARGET_DIRECTORY
 bosh scp -d cf_databases ccdb/0:/tmp/app_usage_events.csv ${TARGET_DIRECTORY}/app_usage_events_${REGION}_${DEPLOY_ENV}.csv
 bosh scp -d cf_databases ccdb/0:/tmp/organizations.csv ${TARGET_DIRECTORY}/organizations_${REGION}_${DEPLOY_ENV}.csv
-
-
-
+bosh scp -d cf_databases ccdb/0:/tmp/existing_apps.csv ${TARGET_DIRECTORY}/existing_apps_${REGION}_${DEPLOY_ENV}.csv

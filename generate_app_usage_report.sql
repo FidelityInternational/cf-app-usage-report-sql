@@ -13,7 +13,8 @@
  * 1. Dump the tables from CCDB:
  *
  *    PSQL_URL=postgresql://localhost:3306/cloud_controller
- *    bosh ssh -d cf_databases ccdb/0 "\
+ *    bosh ssh -d cf_databases ccdb/0 " \
+ *      sudo -u vcap -i \
  *      /var/vcap/packages/postgres-9.6.3/bin/pg_dump ${PSQL_URL} \
  *       --not-owner \
  *       --disable-triggers \
@@ -75,6 +76,8 @@ SELECT
 FROM bulk_app_usage_events
 WHERE created_at >= now() - interval '1 month'
 AND (state = 'STOPPED' OR state = 'STARTED');
+
+
 
 /*
  * Accumulate the MB/secs used for each app, from this event until
@@ -149,6 +152,41 @@ ON app_usage_events.app_guid = first_app_usage_events.app_guid
 AND app_usage_events.created_at = first_app_usage_events.created_at
 GROUP BY app_usage_events.app_guid, app_usage_events.org_guid, app_usage_events.space_name;
 
+/*
+ * We must also take into account all the apps that did not have any
+ * event in the last period, but they are running anyway.
+ *
+ * We query the generate tabled existing_apps which contains info
+ * of all the existing apps.
+ *
+ * The consumption of these apps will be the desired consumption for
+ * all the window.
+ *
+ * This query:
+ *  - searches for any app that is STARTED with instances > 0
+ *  - that has not events in the last month
+ *  - computes the usage for all the window
+ *
+ */
+DROP MATERIALIZED VIEW IF EXISTS per_app_no_events_usage_in_secs CASCADE;
+CREATE MATERIALIZED VIEW per_app_no_events_usage_in_secs AS
+SELECT
+    existing_apps.app_guid,
+    existing_apps.org_guid,
+    existing_apps.space_name,
+    sum (
+        memory *
+        instances *
+        EXTRACT(EPOCH FROM INTERVAL '1 month')
+    ) current_consumed,
+    0 as previous_consumed
+FROM existing_apps
+WHERE state = 'STARTED'
+AND instances > 0
+AND app_guid NOT IN (
+    SELECT DISTINCT app_guid FROM last_month_app_usage_events
+)
+GROUP BY existing_apps.app_guid, existing_apps.org_guid, existing_apps.space_name;
 
 /*
  * Sum and normalise up the actual usage for each app:
@@ -177,6 +215,8 @@ FROM (
     SELECT * FROM per_app_usage_in_secs
     UNION
     SELECT * FROM per_app_carried_usage_in_secs
+    UNION
+    SELECT * FROM per_app_no_events_usage_in_secs
 ) as per_app_usage_in_secs;
 
 

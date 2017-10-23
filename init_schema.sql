@@ -41,4 +41,16 @@ CREATE TABLE IF NOT EXISTS bulk_organizations (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS organizations_guid_index ON bulk_organizations USING btree (guid);
 
+--- Processes/Apps without the id
+CREATE TABLE IF NOT EXISTS existing_apps (
+    app_guid text NOT NULL,
+    app_name text NOT NULL,
+    space_guid text NOT NULL,
+    space_name text NOT NULL,
+    org_guid text NOT NULL,
+    memory integer,
+    instances integer DEFAULT 1,
+    state text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS existing_apps_app_guid_index ON existing_apps USING btree (app_guid);
 
