@@ -119,21 +119,26 @@ GROUP BY app_guid, org_guid, space_name;
  * window. The first event reports that previous usage. We sum for all the
  * window because the first event will later substract the previous usage.
  *
- * This can be considered as the "initial" event for every app in the window.
+ * This can be considered as if there is an first "initial" event with
+ * previous_consumed = 0, which happened in t_start. Because that, we
+ * would multiply for all size of the window: tstart - tend.
  *
  * This query:
  *  - searches for the first event of each app
- *  - computes the usage from the start of the
+ *  - computes the usage from the all the window
  */
-DROP MATERIALIZED VIEW IF EXISTS first_known_app_usage_in_secs CASCADE;
-CREATE MATERIALIZED VIEW first_known_app_usage_in_secs AS
+DROP MATERIALIZED VIEW IF EXISTS per_app_carried_usage_in_secs CASCADE;
+CREATE MATERIALIZED VIEW per_app_carried_usage_in_secs AS
 SELECT
     app_usage_events.app_guid,
+    app_usage_events.org_guid,
+    app_usage_events.space_name,
     sum (
         previous_memory_in_mb_per_instance *
         previous_instance_count *
         EXTRACT(EPOCH FROM INTERVAL '1 month')
-    ) consumed
+    ) current_consumed,
+    0 as previous_consumed
 FROM last_month_app_usage_events AS app_usage_events
 INNER JOIN (
         SELECT app_guid, MIN(created_at) created_at
@@ -142,7 +147,8 @@ INNER JOIN (
     ) first_app_usage_events
 ON app_usage_events.app_guid = first_app_usage_events.app_guid
 AND app_usage_events.created_at = first_app_usage_events.created_at
-GROUP BY app_usage_events.app_guid;
+GROUP BY app_usage_events.app_guid, app_usage_events.org_guid, app_usage_events.space_name;
+
 
 /*
  * Sum and normalise up the actual usage for each app:
@@ -164,13 +170,14 @@ SELECT
             (
                 per_app_usage_in_secs.current_consumed
                 - per_app_usage_in_secs.previous_consumed
-                + first_known_app_usage_in_secs.consumed
             ) / EXTRACT(EPOCH FROM INTERVAL '1 hour')
         ) / 1024
     ) as gb_hr
-FROM per_app_usage_in_secs,
-    first_known_app_usage_in_secs
-WHERE per_app_usage_in_secs.app_guid = first_known_app_usage_in_secs.app_guid;
+FROM (
+    SELECT * FROM per_app_usage_in_secs
+    UNION
+    SELECT * FROM per_app_carried_usage_in_secs
+) as per_app_usage_in_secs;
 
 
 /*
@@ -200,7 +207,7 @@ ORDER BY organizations.name, space_name;
  */
 REFRESH MATERIALIZED VIEW last_month_app_usage_events;
 REFRESH MATERIALIZED VIEW per_app_usage_in_secs;
-REFRESH MATERIALIZED VIEW first_known_app_usage_in_secs;
+REFRESH MATERIALIZED VIEW per_app_carried_usage_in_secs;
 REFRESH MATERIALIZED VIEW app_usage_gb_hour;
 
 SELECT
