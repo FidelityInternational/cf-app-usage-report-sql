@@ -67,10 +67,10 @@ SELECT
     ELSE previous_instance_count
     END as previous_instance_count,
     state,
+    memory_in_mb_per_instance,
     CASE WHEN state='STOPPED' THEN 0
     ELSE instance_count
     END as instance_count,
-    memory_in_mb_per_instance,
     FLOOR(EXTRACT(EPOCH FROM now() - created_at)) as dt,
     FLOOR(EXTRACT(EPOCH FROM created_at - (now() - interval '1 month'))) as pdt
 FROM bulk_app_usage_events
@@ -78,6 +78,85 @@ WHERE created_at >= now() - interval '1 month'
 AND (state = 'STOPPED' OR state = 'STARTED');
 
 
+/*
+ * Add fake usage events to compute the carried usage of the app,
+ * before the window being computed.
+ *
+ * We know the carried usage because it should be the "previous" usage of the first event.
+ *
+ * The premise is that the app has been running since before the start of the
+ * window. The first event reports that previous usage. For this event
+ * the dt will be all the window (1 month) as it happens at the beginning.
+ *
+ * pdt will be 0.
+ *
+ * This query:
+ *  - searches for the first event of each app
+ *  - creates a new event e[-1] with e[-1].current = e[0].previous
+ */
+DROP MATERIALIZED VIEW IF EXISTS carried_app_usage_fake_events CASCADE;
+CREATE MATERIALIZED VIEW carried_app_usage_fake_events AS
+SELECT
+    now() - interval '1 month' as created_at,
+    app_usage_events.app_guid,
+    app_usage_events.org_guid,
+    app_usage_events.space_name,
+    text('STOPPED') as previous_state,
+    0 as previous_memory_in_mb_per_instance,
+    0 as previous_instance_count,
+    text('STARTED') as state,
+    previous_memory_in_mb_per_instance as memory_in_mb_per_instance,
+    previous_instance_count as instance_count,
+    FLOOR(EXTRACT(EPOCH FROM INTERVAL '1 month')) as dt,
+    FLOOR(EXTRACT(EPOCH FROM to_timestamp(0))) as pdt
+FROM last_month_app_usage_events AS app_usage_events
+INNER JOIN (
+        SELECT app_guid, MIN(created_at) created_at
+        FROM last_month_app_usage_events
+        GROUP BY app_guid
+    ) first_app_usage_events
+ON app_usage_events.app_guid = first_app_usage_events.app_guid
+AND app_usage_events.created_at = first_app_usage_events.created_at;
+
+
+/*
+ * We must also take into account all the apps that did not have any
+ * event in the last period, but they are running anyway.
+ *
+ * We query the generate table existing_apps which contains info
+ * of all the existing apps, and generate fake events in the start
+ * of the window
+ *
+ * The premise is that the app has been running since before the start of the
+ * window. The first event reports that previous usage. For this event
+ * the dt will be all the window (1 month) as it happens at the beginning.
+ *
+ * This query:
+ *  - searches for any app that is STARTED with instances > 0
+ *  - that has not events in the last month
+ *  - creates a new event for this app at the begginging of the window
+ */
+DROP MATERIALIZED VIEW IF EXISTS carried_no_events_app_usage_fake_events CASCADE;
+CREATE MATERIALIZED VIEW carried_no_events_app_usage_fake_events AS
+SELECT
+    now() - interval '1 month' as created_at,
+    existing_apps.app_guid,
+    existing_apps.org_guid,
+    existing_apps.space_name,
+    text('STOPPED') as previous_state,
+    0 as previous_memory_in_mb_per_instance,
+    0 as previous_instance_count,
+    text('STARTED') as state,
+    memory as memory_in_mb_per_instance,
+    instances as instance_count,
+    FLOOR(EXTRACT(EPOCH FROM INTERVAL '1 month')) as dt,
+    FLOOR(EXTRACT(EPOCH FROM to_timestamp(0))) as pdt
+FROM existing_apps
+WHERE state = 'STARTED'
+AND instances > 0
+AND app_guid NOT IN (
+    SELECT DISTINCT app_guid FROM last_month_app_usage_events
+);
 
 /*
  * Accumulate the MB/secs used for each app, from this event until
@@ -110,83 +189,14 @@ SELECT
         * previous_instance_count
         * dt
     ) as previous_consumed
-FROM last_month_app_usage_events AS app_usage_events
+FROM (
+    SELECT * FROM last_month_app_usage_events
+    UNION
+    SELECT * FROM carried_app_usage_fake_events
+    UNION
+    SELECT * FROM carried_no_events_app_usage_fake_events
+) AS app_usage_events
 GROUP BY app_guid, org_guid, space_name;
-
-/*
- * Calculate the carried usage of the app in MB/secs,
- * before the windows. We know the carried usage because
- * it should be the "previous" usage of the first event.
- *
- * The premise is that the app has been running since before the start of the
- * window. The first event reports that previous usage. We sum for all the
- * window because the first event will later substract the previous usage.
- *
- * This can be considered as if there is an first "initial" event with
- * previous_consumed = 0, which happened in t_start. Because that, we
- * would multiply for all size of the window: tstart - tend.
- *
- * This query:
- *  - searches for the first event of each app
- *  - computes the usage from the all the window
- */
-DROP MATERIALIZED VIEW IF EXISTS per_app_carried_usage_in_secs CASCADE;
-CREATE MATERIALIZED VIEW per_app_carried_usage_in_secs AS
-SELECT
-    app_usage_events.app_guid,
-    app_usage_events.org_guid,
-    app_usage_events.space_name,
-    sum (
-        previous_memory_in_mb_per_instance *
-        previous_instance_count *
-        EXTRACT(EPOCH FROM INTERVAL '1 month')
-    ) current_consumed,
-    0 as previous_consumed
-FROM last_month_app_usage_events AS app_usage_events
-INNER JOIN (
-        SELECT app_guid, MIN(created_at) created_at
-        FROM last_month_app_usage_events
-        GROUP BY app_guid
-    ) first_app_usage_events
-ON app_usage_events.app_guid = first_app_usage_events.app_guid
-AND app_usage_events.created_at = first_app_usage_events.created_at
-GROUP BY app_usage_events.app_guid, app_usage_events.org_guid, app_usage_events.space_name;
-
-/*
- * We must also take into account all the apps that did not have any
- * event in the last period, but they are running anyway.
- *
- * We query the generate tabled existing_apps which contains info
- * of all the existing apps.
- *
- * The consumption of these apps will be the desired consumption for
- * all the window.
- *
- * This query:
- *  - searches for any app that is STARTED with instances > 0
- *  - that has not events in the last month
- *  - computes the usage for all the window
- *
- */
-DROP MATERIALIZED VIEW IF EXISTS per_app_no_events_usage_in_secs CASCADE;
-CREATE MATERIALIZED VIEW per_app_no_events_usage_in_secs AS
-SELECT
-    existing_apps.app_guid,
-    existing_apps.org_guid,
-    existing_apps.space_name,
-    sum (
-        memory *
-        instances *
-        EXTRACT(EPOCH FROM INTERVAL '1 month')
-    ) current_consumed,
-    0 as previous_consumed
-FROM existing_apps
-WHERE state = 'STARTED'
-AND instances > 0
-AND app_guid NOT IN (
-    SELECT DISTINCT app_guid FROM last_month_app_usage_events
-)
-GROUP BY existing_apps.app_guid, existing_apps.org_guid, existing_apps.space_name;
 
 /*
  * Sum and normalise up the actual usage for each app:
@@ -211,14 +221,7 @@ SELECT
             ) / EXTRACT(EPOCH FROM INTERVAL '1 hour')
         ) / 1024
     ) as gb_hr
-FROM (
-    SELECT * FROM per_app_usage_in_secs
-    UNION
-    SELECT * FROM per_app_carried_usage_in_secs
-    UNION
-    SELECT * FROM per_app_no_events_usage_in_secs
-) as per_app_usage_in_secs;
-
+FROM per_app_usage_in_secs;
 
 /*
  * Finally, aggregate all the data from all the apps in each space
@@ -246,8 +249,9 @@ ORDER BY organizations.name, space_name;
  * Refresh the views to get the latest data
  */
 REFRESH MATERIALIZED VIEW last_month_app_usage_events;
+REFRESH MATERIALIZED VIEW carried_app_usage_fake_events;
+REFRESH MATERIALIZED VIEW carried_no_events_app_usage_fake_events;
 REFRESH MATERIALIZED VIEW per_app_usage_in_secs;
-REFRESH MATERIALIZED VIEW per_app_carried_usage_in_secs;
 REFRESH MATERIALIZED VIEW app_usage_gb_hour;
 
 SELECT
