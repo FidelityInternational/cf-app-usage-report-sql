@@ -1,5 +1,4 @@
 DELETE from bulk_app_usage_events;
-
 \copy bulk_app_usage_events FROM './data/app_usage_events_uk_np1.csv';
 \copy bulk_app_usage_events FROM './data/app_usage_events_uk_np2.csv';
 \copy bulk_app_usage_events FROM './data/app_usage_events_uk_p1.csv';

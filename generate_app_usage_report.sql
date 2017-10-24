@@ -73,7 +73,8 @@ SELECT
     FLOOR(EXTRACT(EPOCH FROM date_trunc('hour', now()) - created_at)) as dt,
     FLOOR(EXTRACT(EPOCH FROM created_at - (date_trunc('hour', now()) - interval '1 month'))) as pdt
 FROM bulk_app_usage_events
-WHERE created_at >= now() - interval '1 month'
+WHERE created_at >= date_trunc('hour', now()) - interval '1 month'
+AND created_at <= date_trunc('hour', now())
 AND (state = 'STOPPED' OR state = 'STARTED')
 AND (previous_state = 'STOPPED' OR previous_state = 'STARTED');
 
