@@ -336,7 +336,7 @@ ORDER BY organizations.name, space_name, tier;
  * for each tier.
  *
  */
-CREATE OR REPLACE TEMPORARY VIEW final_month_usage_report AS
+CREATE OR REPLACE VIEW final_month_usage_report AS
 SELECT
     all_org_space.org_name as "App",
     all_org_space.space_name as "Space Name",
@@ -387,7 +387,7 @@ LEFT OUTER JOIN (
 ) AS tier4
     ON all_org_space.org_name = tier4.org_name
     AND all_org_space.space_name = tier4.space_name
-;
+ORDER BY all_org_space.org_name, all_org_space.space_name;
 
 
 /*
