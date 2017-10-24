@@ -31,5 +31,5 @@ run usage_test single_stopped_started
 run usage_test rolling_started_split_tier_events
 run usage_test events_breaching_time_window_walls_all_tiers
 run usage_test multiple_apps_with_mixed_event_types
-# run usage_test app_has_no_events_within_time_window # add app to existing_apps table
+run usage_test app_has_no_events_within_time_window  add app to existing_apps table
 #run usage_test multiple_apps_all_tiers
