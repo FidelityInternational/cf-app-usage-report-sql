@@ -41,7 +41,6 @@
 
 \timing
 
-
 /*
  * Create a view with the last events from the last month.
  * We get several info we would need later, like the org_guid, space, etc.
@@ -49,8 +48,8 @@
  * We use  date_trunc('hour', now()) to work rounded to last hour.
  *
  * Additionally, we must filter and normalise the data:
- *  - We only consider STARTED and STOPPED
- *  - The STOPPED events should report 0 instances, so the maths later can work.
+ *  - We only consider STARTED and STOPPED for current and previous state
+ *  - The STOPPED events should report 0 instances.
  *
  * Note: This is the perfect place to limit your searches for debuging.
  */
@@ -71,18 +70,53 @@ SELECT
     CASE WHEN state='STOPPED' THEN 0
     ELSE instance_count
     END as instance_count,
-    FLOOR(EXTRACT(EPOCH FROM now() - created_at)) as dt,
-    FLOOR(EXTRACT(EPOCH FROM created_at - (now() - interval '1 month'))) as pdt
+    FLOOR(EXTRACT(EPOCH FROM date_trunc('hour', now()) - created_at)) as dt,
+    FLOOR(EXTRACT(EPOCH FROM created_at - (date_trunc('hour', now()) - interval '1 month'))) as pdt
 FROM bulk_app_usage_events
 WHERE created_at >= now() - interval '1 month'
-AND (state = 'STOPPED' OR state = 'STARTED');
+AND (state = 'STOPPED' OR state = 'STARTED')
+AND (previous_state = 'STOPPED' OR previous_state = 'STARTED');
 
 
 /*
- * Add fake usage events to compute the carried usage of the app,
+ * Create a view with the last "metrics" of the events.
+ * Each event has 2 metrics:
+ *
+ *  - One metric for the current usage, that will be added.
+ *  - One metric for the previous usage, that will be substracted by setting instances == 0
+ *
+ */
+DROP MATERIALIZED VIEW IF EXISTS app_usage_metrics CASCADE;
+CREATE MATERIALIZED VIEW app_usage_metrics AS
+SELECT
+    created_at,
+    app_guid,
+    org_guid,
+    space_name,
+    previous_state as state,
+    previous_memory_in_mb_per_instance as memory_in_mb_per_instance,
+    - previous_instance_count as instance_count,  -- You substract the previous usage
+    dt
+FROM last_month_app_usage_events
+UNION
+SELECT
+    created_at,
+    app_guid,
+    org_guid,
+    space_name,
+    state,
+    memory_in_mb_per_instance,
+    instance_count,
+    dt
+FROM last_month_app_usage_events;
+
+
+/*
+ * Add metrics to compute the carried usage of the app,
  * before the window being computed.
  *
- * We know the carried usage because it should be the "previous" usage of the first event.
+ * We know the carried usage because it should be the reported "previous"
+ * usage of the first event.
  *
  * The premise is that the app has been running since before the start of the
  * window. The first event reports that previous usage. For this event
@@ -94,21 +128,19 @@ AND (state = 'STOPPED' OR state = 'STARTED');
  *  - searches for the first event of each app
  *  - creates a new event e[-1] with e[-1].current = e[0].previous
  */
-DROP MATERIALIZED VIEW IF EXISTS carried_app_usage_fake_events CASCADE;
-CREATE MATERIALIZED VIEW carried_app_usage_fake_events AS
+DROP MATERIALIZED VIEW IF EXISTS carried_app_usage_metrics CASCADE;
+CREATE MATERIALIZED VIEW carried_app_usage_metrics AS
 SELECT
-    now() - interval '1 month' as created_at,
+    date_trunc('hour', now()) - interval '1 month' as created_at,
     app_usage_events.app_guid,
     app_usage_events.org_guid,
     app_usage_events.space_name,
-    text('STOPPED') as previous_state,
-    0 as previous_memory_in_mb_per_instance,
-    0 as previous_instance_count,
-    text('STARTED') as state,
+    app_usage_events.previous_state as state,
     previous_memory_in_mb_per_instance as memory_in_mb_per_instance,
-    previous_instance_count as instance_count,
-    FLOOR(EXTRACT(EPOCH FROM INTERVAL '1 month')) as dt,
-    FLOOR(EXTRACT(EPOCH FROM to_timestamp(0))) as pdt
+    CASE WHEN previous_state='STOPPED' THEN 0
+    ELSE previous_instance_count
+    END as instance_count,
+    FLOOR(EXTRACT(EPOCH FROM INTERVAL '1 month')) as dt
 FROM last_month_app_usage_events AS app_usage_events
 INNER JOIN (
         SELECT app_guid, MIN(created_at) created_at
@@ -124,33 +156,28 @@ AND app_usage_events.created_at = first_app_usage_events.created_at;
  * event in the last period, but they are running anyway.
  *
  * We query the generate table existing_apps which contains info
- * of all the existing apps, and generate fake events in the start
+ * of all the existing apps, and generate fake metrics in the start
  * of the window
  *
- * The premise is that the app has been running since before the start of the
- * window. The first event reports that previous usage. For this event
- * the dt will be all the window (1 month) as it happens at the beginning.
+ * The premise is that the app with no events has been running since
+ * before the start of the window. So we add a new metric.
  *
  * This query:
  *  - searches for any app that is STARTED with instances > 0
  *  - that has not events in the last month
  *  - creates a new event for this app at the begginging of the window
  */
-DROP MATERIALIZED VIEW IF EXISTS carried_no_events_app_usage_fake_events CASCADE;
-CREATE MATERIALIZED VIEW carried_no_events_app_usage_fake_events AS
+DROP MATERIALIZED VIEW IF EXISTS carried_no_events_app_usage_metrics CASCADE;
+CREATE MATERIALIZED VIEW carried_no_events_app_usage_metrics AS
 SELECT
-    now() - interval '1 month' as created_at,
+    date_trunc('hour', now()) - interval '1 month' as created_at,
     existing_apps.app_guid,
     existing_apps.org_guid,
     existing_apps.space_name,
-    text('STOPPED') as previous_state,
-    0 as previous_memory_in_mb_per_instance,
-    0 as previous_instance_count,
-    text('STARTED') as state,
+    state,
     memory as memory_in_mb_per_instance,
     instances as instance_count,
-    FLOOR(EXTRACT(EPOCH FROM INTERVAL '1 month')) as dt,
-    FLOOR(EXTRACT(EPOCH FROM to_timestamp(0))) as pdt
+    FLOOR(EXTRACT(EPOCH FROM INTERVAL '1 month')) as dt
 FROM existing_apps
 WHERE state = 'STARTED'
 AND instances > 0
@@ -168,8 +195,6 @@ AND app_guid NOT IN (
  *
  * - current_consumed: The usage of the app after this event until the
  *   end of the window.
- * - previous_consumed: What the app has "stopped consuming" after this
- *   event until the end of the window
  *
  * previous_consumed will be later be aggregated.
  */
@@ -183,19 +208,14 @@ SELECT
         memory_in_mb_per_instance
         * instance_count
         * dt
-    ) as current_consumed,
-    sum (
-        previous_memory_in_mb_per_instance
-        * previous_instance_count
-        * dt
-    ) as previous_consumed
+    ) as current_consumed
 FROM (
-    SELECT * FROM last_month_app_usage_events
+    SELECT * FROM app_usage_metrics
     UNION
-    SELECT * FROM carried_app_usage_fake_events
+    SELECT * FROM carried_app_usage_metrics
     UNION
-    SELECT * FROM carried_no_events_app_usage_fake_events
-) AS app_usage_events
+    SELECT * FROM carried_no_events_app_usage_metrics
+) AS app_usage_metrics
 GROUP BY app_guid, org_guid, space_name;
 
 /*
@@ -214,13 +234,9 @@ SELECT
     per_app_usage_in_secs.org_guid,
     per_app_usage_in_secs.space_name,
     (
-        (
-            (
-                per_app_usage_in_secs.current_consumed
-                - per_app_usage_in_secs.previous_consumed
-            ) / EXTRACT(EPOCH FROM INTERVAL '1 hour')
-        ) / 1024
-    ) as gb_hr
+        per_app_usage_in_secs.current_consumed /
+            EXTRACT(EPOCH FROM INTERVAL '1 hour')
+    ) / 1024 as gb_hr
 FROM per_app_usage_in_secs;
 
 /*
@@ -249,8 +265,9 @@ ORDER BY organizations.name, space_name;
  * Refresh the views to get the latest data
  */
 REFRESH MATERIALIZED VIEW last_month_app_usage_events;
-REFRESH MATERIALIZED VIEW carried_app_usage_fake_events;
-REFRESH MATERIALIZED VIEW carried_no_events_app_usage_fake_events;
+REFRESH MATERIALIZED VIEW app_usage_metrics;
+REFRESH MATERIALIZED VIEW carried_app_usage_metrics;
+REFRESH MATERIALIZED VIEW carried_no_events_app_usage_metrics;
 REFRESH MATERIALIZED VIEW per_app_usage_in_secs;
 REFRESH MATERIALIZED VIEW app_usage_gb_hour;
 
