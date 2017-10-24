@@ -3,7 +3,9 @@ PWD:=$(shell pwd)
 
 
 help:
-	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:[^=].*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@echo "Parameters:"
+	@grep -E '^[a-zA-Z0-9_-]+:=.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = "#?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 all: download_usage start_postgresql load_data_on_psql generate_report_on_psql stop_postgresql ### Do all: download data, generate report
 
@@ -48,7 +50,9 @@ load_data_on_psql: ### Init the schema and load the usage data
 		-v ON_ERROR_STOP=1 \
 		-f ./load_usage_from_csv_into_sql.sql
 
-generate_report_on_psql: ### Reload the logic and regenerate the report
+END_DATE:=NULL ### Valid values: "timestamp '2017-09-05'"
+WINDOW:=NULL ### Valid values: "interval '1 week'"
+generate_report_on_psql: ### Reload the logic and regenerate the report, with custom END_DATE and WINDOW
 	@echo "Generating the report"
 	docker run -i --rm \
 		--link report-postgres:postgres \
@@ -57,6 +61,8 @@ generate_report_on_psql: ### Reload the logic and regenerate the report
 		"${POSTGRES_DOCKER_IMAGE}" \
 		psql -h postgres -U postgres \
 		-v ON_ERROR_STOP=1 \
+		-v end_date="${END_DATE}" \
+		-v window="${WINDOW}" \
 		-f ./generate_app_usage_report.sql
 
 	@echo "Done! report in data/report.csv"

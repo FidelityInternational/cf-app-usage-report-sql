@@ -50,23 +50,37 @@
  * We return: t_start, t_end and t_interval
  *
  * To be sure that the "interval 1 month" is computer properly, e do:
- *   base_date - (base_date - interval '1 month') '1 month' AS t_interval
+ *   base_date - (base_date - interval '...')  AS t_interval
  *
  * In this case we want to base the computation from the day 20th of
  * the current month
+ *
+ * Allows get variables to configure the report from pqsql via
+ * -v <name>="value".
+ *
+ *  * end_date, default = date_trunc('month', now()) + interval '19 days'
+ *    That is the 20th of the current month at 0:00
+ *
+ *  * window = default = interval '1 month'
  *
  */
 DROP MATERIALIZED VIEW IF EXISTS report_window CASCADE;
 CREATE MATERIALIZED VIEW report_window  AS
 SELECT
-    base_date - interval '1 month' AS t_start,
-    base_date AS t_end,
+    (end_date - twindow) AS t_start,
+    end_date AS t_end,
     FLOOR(EXTRACT(EPOCH FROM
-        base_date - (base_date - interval '1 month')
+        end_date - (end_date - twindow)
     )) AS t_interval
 FROM (
-    SELECT date_trunc('month', now()) + interval '19 days' base_date
-) AS base_date;
+    SELECT
+    CASE WHEN :end_date IS NOT NULL THEN :end_date
+    ELSE date_trunc('month', now()) + interval '19 days'
+    END as end_date,
+    CASE WHEN :window IS NOT NULL THEN :window
+    ELSE interval '1 month'
+    END as twindow
+) AS x;
 
 /*
  * Create a view with the last events from the last month.
