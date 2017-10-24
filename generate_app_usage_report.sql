@@ -42,10 +42,35 @@
 \timing
 
 /*
+ * Window within the report will be.
+ *
+ * It is a single row query with the range to calculate the report.
+ * This table is used like some sort of variable or parameter.
+ *
+ * We return: t_start, t_end and t_interval
+ *
+ * To be sure that the "interval 1 month" is computer properly, e do:
+ *   base_date - (base_date - interval '1 month') '1 month' AS t_interval
+ *
+ * In this case we want to base the computation from the day 20th of
+ * the current month
+ *
+ */
+DROP MATERIALIZED VIEW IF EXISTS report_window CASCADE;
+CREATE MATERIALIZED VIEW report_window  AS
+SELECT
+    base_date - interval '1 month' AS t_start,
+    base_date AS t_end,
+    FLOOR(EXTRACT(EPOCH FROM
+        base_date - (base_date - interval '1 month')
+    )) AS t_interval
+FROM (
+    SELECT date_trunc('month', now()) + interval '19 days' base_date
+) AS base_date;
+
+/*
  * Create a view with the last events from the last month.
  * We get several info we would need later, like the org_guid, space, etc.
- *
- * We use  date_trunc('hour', now()) to work rounded to last hour.
  *
  * Additionally, we must filter and normalise the data:
  *  - We only consider STARTED and STOPPED for current and previous state
@@ -70,11 +95,10 @@ SELECT
     CASE WHEN state='STOPPED' THEN 0
     ELSE instance_count
     END as instance_count,
-    FLOOR(EXTRACT(EPOCH FROM date_trunc('hour', now()) - created_at)) as dt,
-    FLOOR(EXTRACT(EPOCH FROM created_at - (date_trunc('hour', now()) - interval '1 month'))) as pdt
-FROM bulk_app_usage_events
-WHERE created_at >= date_trunc('hour', now()) - interval '1 month'
-AND created_at <= date_trunc('hour', now())
+    FLOOR(EXTRACT(EPOCH FROM report_window.t_end - created_at)) as dt
+FROM bulk_app_usage_events, report_window
+WHERE created_at >= report_window.t_start
+AND created_at < report_window.t_end
 AND (state = 'STOPPED' OR state = 'STARTED')
 AND (previous_state = 'STOPPED' OR previous_state = 'STARTED');
 
@@ -132,7 +156,7 @@ FROM last_month_app_usage_events;
 DROP MATERIALIZED VIEW IF EXISTS carried_app_usage_metrics CASCADE;
 CREATE MATERIALIZED VIEW carried_app_usage_metrics AS
 SELECT
-    date_trunc('hour', now()) - interval '1 month' as created_at,
+    report_window.t_start as created_at,
     app_usage_events.app_guid,
     app_usage_events.org_guid,
     app_usage_events.space_name,
@@ -141,8 +165,8 @@ SELECT
     CASE WHEN previous_state='STOPPED' THEN 0
     ELSE previous_instance_count
     END as instance_count,
-    FLOOR(EXTRACT(EPOCH FROM INTERVAL '1 month')) as dt
-FROM last_month_app_usage_events AS app_usage_events
+    report_window.t_interval as dt
+FROM report_window, last_month_app_usage_events AS app_usage_events
 INNER JOIN (
         SELECT app_guid, MIN(created_at) created_at
         FROM last_month_app_usage_events
@@ -356,6 +380,7 @@ LEFT OUTER JOIN (
 /*
  * Refresh the views to get the latest data
  */
+REFRESH MATERIALIZED VIEW report_window;
 REFRESH MATERIALIZED VIEW last_month_app_usage_events;
 REFRESH MATERIALIZED VIEW app_usage_metrics;
 REFRESH MATERIALIZED VIEW carried_app_usage_metrics;
@@ -364,6 +389,7 @@ REFRESH MATERIALIZED VIEW per_app_usage_in_mb_secs;
 REFRESH MATERIALIZED VIEW app_usage_gb_hour;
 REFRESH MATERIALIZED VIEW month_usage_report;
 
+SELECT * FROM report_window;
 SELECT * FROM final_month_usage_report;
 
 -- Write as CSV to stdout
