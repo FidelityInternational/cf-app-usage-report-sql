@@ -171,20 +171,57 @@ AND app_usage_events.created_at = first_app_usage_events.created_at;
 DROP MATERIALIZED VIEW IF EXISTS carried_no_events_app_usage_metrics CASCADE;
 CREATE MATERIALIZED VIEW carried_no_events_app_usage_metrics AS
 SELECT
-    date_trunc('hour', now()) - interval '1 month' as created_at,
+    report_window.t_start as created_at,
     existing_apps.app_guid,
     existing_apps.org_guid,
     existing_apps.space_name,
     state,
     memory as memory_in_mb_per_instance,
     instances as instance_count,
-    FLOOR(EXTRACT(EPOCH FROM INTERVAL '1 month')) as dt
-FROM existing_apps
+    report_window.t_interval as dt
+FROM existing_apps, report_window
 WHERE state = 'STARTED'
 AND instances > 0
 AND app_guid NOT IN (
     SELECT DISTINCT app_guid FROM last_month_app_usage_events
 );
+
+/*
+ * Enrich the app_usage_metrics with the tiers based on the memory
+ * consume per instance.
+ *
+ *   We define 4x tiers:
+ *    - 0GB-0.5GB
+ *    - 0.5GB-1GB
+ *    - 1GB-2GB
+ *    - 2GB+
+ *
+ * In this query we will do the union of all the metrics.
+ */
+DROP MATERIALIZED VIEW IF EXISTS app_usage_metrics_tiers CASCADE;
+CREATE MATERIALIZED VIEW app_usage_metrics_tiers AS
+SELECT
+    created_at,
+    app_guid,
+    org_guid,
+    space_name,
+    state,
+    memory_in_mb_per_instance,
+    instance_count,
+    dt,
+    CASE WHEN memory_in_mb_per_instance <= 512 THEN text('0GB-0.5GB')
+         WHEN memory_in_mb_per_instance <= 1024 THEN text('0.5GB-1GB')
+         WHEN memory_in_mb_per_instance <= 2048 THEN text('1GB-2GB')
+    ELSE text('2GB+')
+    END as tier
+FROM (
+    SELECT * FROM app_usage_metrics
+    UNION
+    SELECT * FROM carried_app_usage_metrics
+    UNION
+    SELECT * FROM carried_no_events_app_usage_metrics
+) AS app_usage_metrics;
+
 
 /*
  * Accumulate the MB/secs used for each app, from this event until
@@ -199,8 +236,8 @@ AND app_guid NOT IN (
  *
  * previous_consumed will be later be aggregated.
  */
-DROP MATERIALIZED VIEW IF EXISTS per_app_usage_in_secs CASCADE;
-CREATE MATERIALIZED VIEW per_app_usage_in_secs AS
+DROP MATERIALIZED VIEW IF EXISTS per_app_usage_in_mb_secs CASCADE;
+CREATE MATERIALIZED VIEW per_app_usage_in_mb_secs AS
 SELECT
     app_guid,
     org_guid,
@@ -209,36 +246,26 @@ SELECT
         memory_in_mb_per_instance
         * instance_count
         * dt
-    ) as current_consumed
-FROM (
-    SELECT * FROM app_usage_metrics
-    UNION
-    SELECT * FROM carried_app_usage_metrics
-    UNION
-    SELECT * FROM carried_no_events_app_usage_metrics
-) AS app_usage_metrics
-GROUP BY app_guid, org_guid, space_name;
+    ) as current_consumed,
+    tier
+FROM app_usage_metrics_tiers
+GROUP BY app_guid, org_guid, space_name, tier
+ORDER BY app_guid;
 
 /*
- * Sum and normalise up the actual usage for each app:
- *
- * - adds the usage after each event
- * - substracts the previous usage after each event
- * - adds the first known usage of the app
- *
- * Finally normalises everything to 1h and GB
+ * normalise the actual usage for each app to 1h and GB
  */
 DROP MATERIALIZED VIEW IF EXISTS app_usage_gb_hour CASCADE;
 CREATE MATERIALIZED VIEW app_usage_gb_hour AS
 SELECT
-    per_app_usage_in_secs.app_guid,
-    per_app_usage_in_secs.org_guid,
-    per_app_usage_in_secs.space_name,
+    app_guid,
+    org_guid,
+    space_name,
     (
-        per_app_usage_in_secs.current_consumed /
-            EXTRACT(EPOCH FROM INTERVAL '1 hour')
-    ) / 1024 as gb_hr
-FROM per_app_usage_in_secs;
+        current_consumed / EXTRACT(EPOCH FROM INTERVAL '1 hour')
+    ) / 1024 as gb_hr,
+    tier
+FROM per_app_usage_in_mb_secs;
 
 /*
  * Finally, aggregate all the data from all the apps in each space
@@ -248,20 +275,84 @@ FROM per_app_usage_in_secs;
  * Note: if the organization name is missing, the data will NOT be displayed
  * (inner join)
  */
-CREATE OR REPLACE TEMPORARY VIEW month_usage_report AS
+DROP MATERIALIZED VIEW IF EXISTS month_usage_report CASCADE;
+CREATE MATERIALIZED VIEW month_usage_report AS
 SELECT
     organizations.name as org_name,
     space_name,
-    ROUND(SUM(gb_hr)::numeric, 2) total_gb_hr
+    ROUND(SUM(gb_hr)::numeric, 2) total_gb_hr,
+    tier
 FROM app_usage_gb_hour
 INNER JOIN bulk_organizations AS organizations ON organizations.guid = app_usage_gb_hour.org_guid
 WHERE organizations.name LIKE '%\_%'
-GROUP BY organizations.name, space_name
-ORDER BY organizations.name, space_name;
+GROUP BY organizations.name, space_name, tier
+ORDER BY organizations.name, space_name, tier;
 
+---------------------------------------------------------------------------
 ----------------------------------------------------------------------------
 ----------------------------------------------------------------------------
-----------------------------------------------------------------------------
+/*
+ * Generate the final report with one entry per org+space
+ * and one column per tier.
+ *
+ * To do this, we do an outer join of all the org+space with a subquery
+ * for each tier.
+ *
+ */
+CREATE OR REPLACE TEMPORARY VIEW final_month_usage_report AS
+SELECT
+    all_org_space.org_name as "App",
+    all_org_space.space_name as "Space Name",
+    all_org_space.total_gb_hr as "Total GB Hours",
+    CASE WHEN tier1.total_gb_hr IS NULL THEN 0
+    ELSE tier1.total_gb_hr END
+    AS "0GB-0.5GB",
+    CASE WHEN tier2.total_gb_hr IS NULL THEN 0
+    ELSE tier2.total_gb_hr END
+    AS "0.5GB-1GB",
+    CASE WHEN tier3.total_gb_hr IS NULL THEN 0
+    ELSE tier3.total_gb_hr END
+    AS "1GB-2GB",
+    CASE WHEN tier4.total_gb_hr IS NULL THEN 0
+    ELSE tier4.total_gb_hr END
+    AS "2GB+"
+FROM
+(
+    SELECT org_name, space_name, SUM(total_gb_hr) as total_gb_hr
+    FROM month_usage_report
+    GROUP BY org_name, space_name
+) AS all_org_space
+LEFT OUTER JOIN (
+    SELECT org_name, space_name, total_gb_hr
+    FROM month_usage_report
+    WHERE tier = '0GB-0.5GB'
+) AS tier1
+    ON all_org_space.org_name = tier1.org_name
+    AND all_org_space.space_name = tier1.space_name
+LEFT OUTER JOIN (
+    SELECT org_name, space_name, total_gb_hr
+    FROM month_usage_report
+    WHERE tier = '0.5GB-1GB'
+) AS tier2
+    ON all_org_space.org_name = tier2.org_name
+    AND all_org_space.space_name = tier2.space_name
+LEFT OUTER JOIN (
+    SELECT org_name, space_name, total_gb_hr
+    FROM month_usage_report
+    WHERE tier = '1GB-2GB'
+) AS tier3
+    ON all_org_space.org_name = tier3.org_name
+    AND all_org_space.space_name = tier3.space_name
+LEFT OUTER JOIN (
+    SELECT org_name, space_name, total_gb_hr
+    FROM month_usage_report
+    WHERE tier = '2GB+'
+) AS tier4
+    ON all_org_space.org_name = tier4.org_name
+    AND all_org_space.space_name = tier4.space_name
+;
+
+
 /*
  * Refresh the views to get the latest data
  */
@@ -269,17 +360,14 @@ REFRESH MATERIALIZED VIEW last_month_app_usage_events;
 REFRESH MATERIALIZED VIEW app_usage_metrics;
 REFRESH MATERIALIZED VIEW carried_app_usage_metrics;
 REFRESH MATERIALIZED VIEW carried_no_events_app_usage_metrics;
-REFRESH MATERIALIZED VIEW per_app_usage_in_secs;
+REFRESH MATERIALIZED VIEW per_app_usage_in_mb_secs;
 REFRESH MATERIALIZED VIEW app_usage_gb_hour;
+REFRESH MATERIALIZED VIEW month_usage_report;
 
-SELECT
-    org_name as "App",
-    space_name as "Space Name",
-    total_gb_hr as "GB Hours"
-FROM month_usage_report;
+SELECT * FROM final_month_usage_report;
 
 -- Write as CSV to stdout
 -- \copy (SELECT org_name as "App", space_name as "Space Name", total_gb_hr as "GB Hours" FROM month_usage_report)  TO STDOUT WITH CSV HEADER;
 
 --- Write as CSV file to a file
-\copy (SELECT org_name as "App", space_name as "Space Name", total_gb_hr as "GB Hours" FROM month_usage_report)  TO 'data/report.csv' WITH CSV HEADER;
+\copy (SELECT * FROM final_month_usage_report)  TO 'data/report.csv' WITH CSV HEADER;
