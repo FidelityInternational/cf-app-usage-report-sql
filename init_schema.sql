@@ -34,8 +34,8 @@ CREATE TABLE IF NOT EXISTS bulk_organizations (
     created_at timestamp without time zone DEFAULT now() NOT NULL,
     updated_at timestamp without time zone,
     name citext NOT NULL,
-    billing_enabled boolean DEFAULT false NOT NULL,
-    quota_definition_id integer NOT NULL,
+    billing_enabled boolean DEFAULT false,
+    quota_definition_id integer,
     status text DEFAULT 'active'::text,
     default_isolation_segment_guid text
 );
@@ -53,4 +53,3 @@ CREATE TABLE IF NOT EXISTS existing_apps (
     state text NOT NULL
 );
 CREATE INDEX IF NOT EXISTS existing_apps_app_guid_index ON existing_apps USING btree (app_guid);
-
