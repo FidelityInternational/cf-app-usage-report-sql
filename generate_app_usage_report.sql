@@ -322,7 +322,6 @@ SELECT
     tier
 FROM app_usage_gb_hour
 INNER JOIN bulk_organizations AS organizations ON organizations.guid = app_usage_gb_hour.org_guid
-WHERE organizations.name LIKE '%\_%'
 GROUP BY organizations.name, space_name, tier
 ORDER BY organizations.name, space_name, tier;
 
