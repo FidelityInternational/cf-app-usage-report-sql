@@ -7,7 +7,7 @@ help:
 	@echo "Parameters:"
 	@grep -E '^[a-zA-Z0-9_-]+:=.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = "#?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-all: download_usage start_postgresql load_data_on_psql generate_report_on_psql stop_postgresql ### Do all: download data, generate report
+all: download_usage start_postgresql init_schema load_data_on_psql generate_report_on_psql stop_postgresql ### Do all: download data, generate report
 
 download_usage: ### Download all the usage data from every environment using bosh2+ssh
 	time \
@@ -28,7 +28,7 @@ stop_postgresql: ### Stop the postgresql server on docker
 		docker rm -f report-postgres; \
 	fi
 
-load_data_on_psql: ### Init the schema and load the usage data
+init_schema: ### Init the schema
 	@echo "Initializing the base schema"
 	docker run -i --rm \
 		--link report-postgres:postgres \
@@ -39,6 +39,7 @@ load_data_on_psql: ### Init the schema and load the usage data
 		-v ON_ERROR_STOP=1 \
 		-f ./init_schema.sql
 
+load_data_on_psql: ### load the usage data
 	@echo "Importing existing usage data and orgs from environments"
 	time \
 	docker run -i --rm \
