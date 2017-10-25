@@ -72,7 +72,7 @@ bosh \
         COPY (SELECT * FROM existing_apps) TO '/tmp/existing_apps.csv';
     \";
 "
-mkdir -p $TARGET_DIRECTORY
-bosh scp -d cf_databases ccdb/0:/tmp/app_usage_events.csv ${TARGET_DIRECTORY}/app_usage_events_${REGION}_${DEPLOY_ENV}.csv
-bosh scp -d cf_databases ccdb/0:/tmp/organizations.csv ${TARGET_DIRECTORY}/organizations_${REGION}_${DEPLOY_ENV}.csv
-bosh scp -d cf_databases ccdb/0:/tmp/existing_apps.csv ${TARGET_DIRECTORY}/existing_apps_${REGION}_${DEPLOY_ENV}.csv
+mkdir -p "${TARGET_DIRECTORY}"
+bosh scp -d cf_databases ccdb/0:/tmp/app_usage_events.csv "${TARGET_DIRECTORY}/app_usage_events_${REGION}_${DEPLOY_ENV}.csv"
+bosh scp -d cf_databases ccdb/0:/tmp/organizations.csv "${TARGET_DIRECTORY}/organizations_${REGION}_${DEPLOY_ENV}.csv"
+bosh scp -d cf_databases ccdb/0:/tmp/existing_apps.csv "${TARGET_DIRECTORY}/existing_apps_${REGION}_${DEPLOY_ENV}.csv"
