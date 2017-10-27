@@ -152,7 +152,7 @@ FROM last_month_app_usage_events;
 
 /*
  * Add metrics to compute the carried usage of the app,
- * before the window being computed.
+ * before the window.
  *
  * We know the carried usage because it should be the reported "previous"
  * usage of the first event.
@@ -191,8 +191,93 @@ AND app_usage_events.created_at = first_app_usage_events.created_at;
 
 
 /*
+ * Add metrics for apps that have no events within the windows, but
+ * one STARTED event AFTER the window.
+ *
+ * If that is the case it means that the application was running before
+ * the window with an usage as the "previous" of the first event after the
+ * window.
+ */
+DROP MATERIALIZED VIEW IF EXISTS carried_out_of_window_events_right_app_usage_metrics CASCADE;
+CREATE MATERIALIZED VIEW carried_out_of_window_events_right_app_usage_metrics AS
+SELECT
+    report_window.t_start as created_at,
+    bulk_app_usage_events.app_guid,
+    bulk_app_usage_events.org_guid,
+    bulk_app_usage_events.space_name,
+    bulk_app_usage_events.previous_state as state,
+    bulk_app_usage_events.previous_memory_in_mb_per_instance as memory_in_mb_per_instance,
+    bulk_app_usage_events.previous_instance_count as instance_count,
+    report_window.t_interval as dt
+FROM
+    bulk_app_usage_events,
+    (
+        SELECT
+            bulk_app_usage_events.app_guid,
+            MIN(bulk_app_usage_events.created_at) as created_at
+        FROM bulk_app_usage_events, report_window
+        WHERE app_guid NOT IN (
+            SELECT DISTINCT app_guid FROM last_month_app_usage_events
+        )
+        AND (
+            bulk_app_usage_events.previous_state = 'STARTED' OR
+            bulk_app_usage_events.previous_state = 'STOPPED'
+        )
+        AND bulk_app_usage_events.created_at > report_window.t_end
+        GROUP BY app_guid
+    ) AS next_closest_event,
+    report_window
+WHERE bulk_app_usage_events.app_guid = next_closest_event.app_guid
+AND bulk_app_usage_events.created_at = next_closest_event.created_at
+AND bulk_app_usage_events.previous_state = 'STARTED';
+
+
+/*
+ * Add metrics for apps that have no events within the windows, or
+ * after, but it has one STARTED event BEFORE the window.
+ *
+ * If that is the case it means that the application was running before
+ * the window with an usage as the "current" of the first previous
+ * event after the window.
+ */
+DROP MATERIALIZED VIEW IF EXISTS carried_out_of_window_events_left_app_usage_metrics CASCADE;
+CREATE MATERIALIZED VIEW carried_out_of_window_events_left_app_usage_metrics AS
+SELECT
+    report_window.t_start as created_at,
+    bulk_app_usage_events.app_guid,
+    bulk_app_usage_events.org_guid,
+    bulk_app_usage_events.space_name,
+    bulk_app_usage_events.state as state,
+    bulk_app_usage_events.memory_in_mb_per_instance as memory_in_mb_per_instance,
+    bulk_app_usage_events.instance_count as instance_count,
+    report_window.t_interval as dt
+FROM
+    bulk_app_usage_events,
+    (
+        SELECT
+            bulk_app_usage_events.app_guid,
+            MAX(bulk_app_usage_events.created_at) as created_at
+        FROM bulk_app_usage_events, report_window
+        WHERE app_guid NOT IN (
+            SELECT DISTINCT app_guid FROM last_month_app_usage_events
+            UNION
+            SELECT DISTINCT app_guid FROM carried_out_of_window_events_right_app_usage_metrics
+        )
+        AND (
+            bulk_app_usage_events.state = 'STARTED' OR
+            bulk_app_usage_events.state = 'STOPPED'
+        )
+        AND bulk_app_usage_events.created_at < report_window.t_start
+        GROUP BY app_guid
+    ) AS prev_closest_event,
+    report_window
+WHERE bulk_app_usage_events.app_guid = prev_closest_event.app_guid
+AND bulk_app_usage_events.created_at = prev_closest_event.created_at
+AND bulk_app_usage_events.state = 'STARTED';
+
+/*
  * We must also take into account all the apps that did not have any
- * event in the last period, but they are running anyway.
+ * event at all, but they are running anyway.
  *
  * We query the generate table existing_apps which contains info
  * of all the existing apps, and generate fake metrics in the start
@@ -203,7 +288,7 @@ AND app_usage_events.created_at = first_app_usage_events.created_at;
  *
  * This query:
  *  - searches for any app that is STARTED with instances > 0
- *  - that has not events in the last month
+ *  - that has not events in the in all the events table
  *  - creates a new event for this app at the begginging of the window
  */
 DROP MATERIALIZED VIEW IF EXISTS carried_no_events_app_usage_metrics CASCADE;
@@ -220,9 +305,15 @@ SELECT
 FROM existing_apps, report_window
 WHERE state = 'STARTED'
 AND instances > 0
+AND (
+    CASE WHEN updated_at IS NOT NULL THEN updated_at
+    ELSE created_at
+    END
+) < report_window.t_start
 AND app_guid NOT IN (
-    SELECT DISTINCT app_guid FROM last_month_app_usage_events
+    SELECT DISTINCT app_guid FROM bulk_app_usage_events
 );
+
 
 /*
  * Enrich the app_usage_metrics with the tiers based on the memory
@@ -256,6 +347,10 @@ FROM (
     SELECT * FROM app_usage_metrics
     UNION
     SELECT * FROM carried_app_usage_metrics
+    UNION
+    SELECT * FROM carried_out_of_window_events_right_app_usage_metrics
+    UNION
+    SELECT * FROM carried_out_of_window_events_left_app_usage_metrics
     UNION
     SELECT * FROM carried_no_events_app_usage_metrics
 ) AS app_usage_metrics;
@@ -403,6 +498,7 @@ REFRESH MATERIALIZED VIEW app_usage_gb_hour;
 REFRESH MATERIALIZED VIEW month_usage_report;
 
 SELECT * FROM report_window;
+SELECT * FROM app_usage_gb_hour LIMIT 10; -- print this just for testing
 SELECT * FROM final_month_usage_report;
 
 -- Write as CSV to stdout

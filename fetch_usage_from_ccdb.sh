@@ -58,6 +58,8 @@ bosh \
         SELECT
             app_guid,
             apps.name as app_name,
+            processes.created_at,
+            processes.updated_at,
             spaces.guid as space_guid,
             spaces.name as space_name,
             organizations.guid as org_guid,

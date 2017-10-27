@@ -45,6 +45,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS organizations_guid_index ON bulk_organizations
 CREATE TABLE IF NOT EXISTS existing_apps (
     app_guid text NOT NULL,
     app_name text NOT NULL,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_at timestamp without time zone,
     space_guid text NOT NULL,
     space_name text NOT NULL,
     org_guid text NOT NULL,
