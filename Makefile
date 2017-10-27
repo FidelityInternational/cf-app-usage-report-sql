@@ -24,7 +24,7 @@ restart_postgresql: stop_postgresql ### Restart a postgresql server on docker
 	@sleep 10
 
 stop_postgresql: ### Stop the postgresql server on docker
-	if [ -n "$$(docker ps -q -f name=report-postgres)" ]; then \
+	if [ -n "$$(docker ps -a -q -f name=report-postgres)" ]; then \
 		docker rm -f report-postgres; \
 	fi
 
