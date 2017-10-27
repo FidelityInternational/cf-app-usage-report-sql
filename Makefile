@@ -13,7 +13,6 @@ test: ### Run the unit tests of the report
 	./tests/report_generation.sh
 
 download_usage: ### Download all the usage data from every environment using bosh2+ssh
-	time \
 	./download_all_usage.sh uk
 	ls -l data/
 
@@ -61,7 +60,6 @@ init_schema: ### Init the schema
 
 load_data_on_psql: ### load the usage data
 	@echo "Importing existing usage data and orgs from environments"
-	time \
 	docker run -i --rm \
 		--link report-postgres:postgres \
 		-v "${PWD}:/workdir" \
