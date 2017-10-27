@@ -387,8 +387,8 @@ LEFT OUTER JOIN (
 ) AS tier4
     ON all_org_space.org_name = tier4.org_name
     AND all_org_space.space_name = tier4.space_name
+WHERE all_org_space.org_name != 'paas'
 ORDER BY all_org_space.org_name, all_org_space.space_name;
-
 
 /*
  * Refresh the views to get the latest data
