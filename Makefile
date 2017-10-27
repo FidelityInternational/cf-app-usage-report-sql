@@ -9,6 +9,9 @@ help:
 
 all: download_usage restart_postgresql init_schema load_data_on_psql generate_report_on_psql stop_postgresql ### Do all: download data, generate report
 
+test: ### Run the unit tests of the report
+	./tests/report_generation.sh
+
 download_usage: ### Download all the usage data from every environment using bosh2+ssh
 	time \
 	./download_all_usage.sh uk
