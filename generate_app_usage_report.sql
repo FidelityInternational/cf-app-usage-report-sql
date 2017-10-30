@@ -438,16 +438,16 @@ SELECT
     all_org_space.total_gb_hr as "Total GB Hours",
     CASE WHEN tier1.total_gb_hr IS NULL THEN 0
     ELSE tier1.total_gb_hr END
-    AS "0GB-0.5GB",
+    AS "0GB <= x <= 0.5GB",
     CASE WHEN tier2.total_gb_hr IS NULL THEN 0
     ELSE tier2.total_gb_hr END
-    AS "0.5GB-1GB",
+    AS "0.5GB < x <= 1GB",
     CASE WHEN tier3.total_gb_hr IS NULL THEN 0
     ELSE tier3.total_gb_hr END
-    AS "1GB-2GB",
+    AS "1GB < x <= 2GB",
     CASE WHEN tier4.total_gb_hr IS NULL THEN 0
     ELSE tier4.total_gb_hr END
-    AS "2GB+"
+    AS "2GB < x"
 FROM
 (
     SELECT org_name, space_name, SUM(total_gb_hr) as total_gb_hr
