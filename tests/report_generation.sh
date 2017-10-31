@@ -21,12 +21,29 @@ _after_each() {
 	set +x
 }
 
-function usage_test() {
-	make -C "${PROJECT_DIR}" load_data_on_psql USAGE_SQL_FILE="${TEST_DIR}/fixtures/$1/test.sql"
+function header_test() {
+	test_name=single_stopped_started
+
+	make -C "${PROJECT_DIR}" load_data_on_psql USAGE_SQL_FILE="${TEST_DIR}/fixtures/${test_name}/test.sql"
 	make generate_report_on_psql END_DATE="timestamp '2017-10-22'" WINDOW="interval '1 day'"
-	diff "${PROJECT_DIR}/data/report.csv" "${TEST_DIR}/fixtures/$1/expected_report.csv"
+
+	head -n 1 "${PROJECT_DIR}/data/report.csv"|
+		grep -qe '^App,Space Name,Total GB Hours,0GB <= x <= 0.5GB,0.5GB < x <= 1GB,1GB < x <= 2GB,2GB < x$'
 }
 
+function usage_test() {
+	test_name=$1
+
+	make -C "${PROJECT_DIR}" load_data_on_psql USAGE_SQL_FILE="${TEST_DIR}/fixtures/${test_name}/test.sql"
+	make generate_report_on_psql END_DATE="timestamp '2017-10-22'" WINDOW="interval '1 day'"
+
+	# Use tail +2 to strip off the header of the CSV
+	diff \
+		<(tail +2 "${PROJECT_DIR}/data/report.csv") \
+		<(tail +2 "${TEST_DIR}/fixtures/$1/expected_report.csv")
+}
+
+run test_header
 run usage_test single_stopped_started
 run usage_test rolling_started_split_tier_events
 run usage_test events_breaching_time_window_walls_all_tiers
