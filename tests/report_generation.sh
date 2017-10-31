@@ -38,9 +38,10 @@ function usage_test() {
 	make generate_report_on_psql END_DATE="timestamp '2017-10-22'" WINDOW="interval '1 day'"
 
 	# Use tail +2 to strip off the header of the CSV
-	diff \
-		<(tail +2 "${PROJECT_DIR}/data/report.csv") \
-		<(tail +2 "${TEST_DIR}/fixtures/$1/expected_report.csv")
+	tail +2 "${PROJECT_DIR}/data/report.csv" > "${TEMPDIR}/generated_report.csv"
+	tail +2 "${TEST_DIR}/fixtures/$1/expected_report.csv" > "${TEMPDIR}/expected_report.csv"
+
+	diff "${TEMPDIR}/generated_report.csv" "${TEMPDIR}/expected_report.csv"
 }
 
 run header_test
