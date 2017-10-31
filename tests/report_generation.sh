@@ -43,7 +43,7 @@ function usage_test() {
 		<(tail +2 "${TEST_DIR}/fixtures/$1/expected_report.csv")
 }
 
-run test_header
+run header_test
 run usage_test single_stopped_started
 run usage_test rolling_started_split_tier_events
 run usage_test events_breaching_time_window_walls_all_tiers
