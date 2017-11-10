@@ -52,14 +52,14 @@
  * To be sure that the "interval 1 month" is computer properly, e do:
  *   base_date - (base_date - interval '...')  AS t_interval
  *
- * In this case we want to base the computation from the day 20th of
- * the current month
+ * In our case we want to base the computation from the day 15th of
+ * the current month, so we set that as default.
  *
  * Allows get variables to configure the report from pqsql via
  * -v <name>="value".
  *
  *  * end_date, default = date_trunc('month', now()) + interval '19 days'
- *    That is the 20th of the current month at 0:00
+ *    That is the 15th of the current month at 0:00
  *
  *  * window = default = interval '1 month'
  *
@@ -75,7 +75,7 @@ SELECT
 FROM (
     SELECT
     CASE WHEN :end_date IS NOT NULL THEN :end_date
-    ELSE date_trunc('month', now()) + interval '19 days'
+    ELSE date_trunc('month', now()) + interval '14 days'
     END as end_date,
     CASE WHEN :window IS NOT NULL THEN :window
     ELSE interval '1 month'
