@@ -14,15 +14,31 @@ help:
 	@echo "Parameters:"
 	@grep -E '^[a-zA-Z0-9_-]+:=.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = "#?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-all: download_usage restart_postgresql init_schema load_data_on_psql generate_report_on_psql stop_postgresql ### Do all: download data, generate report
+all: download_all_usage render_load_usage_data_sql restart_postgresql init_schema load_data_on_psql generate_report_on_psql stop_postgresql ### Do all: download data, generate report
 
 test: ### Run the unit tests of the report
 	./tests/report_generation.sh
 
-download_usage: ### Download all the usage data from every environment using bosh2+ssh
-	./download_all_usage.sh uk
+download_all_usage: ### Download all the usage data from every environment using bosh2+ssh using the cf-utils-pipeline script
+	rm -f data/*.csv
+	../cf-utils-pipeline/scripts/app-usage-sql/download.sh uk
 	ls -l data/
 	make render_load_usage_data_sql
+
+download_usage: ### Download usage data from a bosh environment
+	$(if ${BOSH_HOST},,$(error Must pass DEPLOY_ENV=<name>))
+	$(if ${BOSH_CLIENT_SECRET},,$(error Must pass DEPLOY_ENV=<name>))
+	$(if ${BOSH_VCAP_PASS},,$(error Must pass DEPLOY_ENV=<name>))
+	docker run -ti \
+			-v $(pwd):/workdir -w /workdir  \
+			-e BOSH_HOST \
+			-e BOSH_CLIENT_SECRET \
+			-e BOSH_VCAP_PASS \
+			-e DATA_FILE_SUFFIX \
+			-e BOSH_CA_CERT \
+			-e TARGET_DIRECTORY \
+			paasmule/bosh2-minimal \
+			./fetch_usage_from_ccdb.sh
 
 render_load_usage_data_sql: ## Renders ${USAGE_SQL_FILE} based on the files in ${DATA_DIR} that match the ${DATA_FILE_SUFFIX_BLOB} pattern
 	./render_load_usage_data_sql.sh ${DATA_DIR} ${DATA_FILE_SUFFIX_BLOB} | tee ${USAGE_SQL_FILE}
