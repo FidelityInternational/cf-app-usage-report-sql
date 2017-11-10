@@ -3,23 +3,25 @@
 # Goes to the CCDB database and dumps the app_usage_events and organizations
 # tables as CSV to be imported later.
 
-# Vars required for this script
-#
-# REGION
-# DEPLOY_ENV
-# BOSH_CLIENT_SECRET
-# BOSH_VCAP_PASS
-# TARGET_DIRECTORY for the downloaded data
-#
-
 set -e -u
 
-export BOSH_GW_USER=vcap
-export BOSH_GW_HOST="${DEPLOY_ENV}-bosh.${REGION}.fid-intl.com"
-export BOSH_GW_PRIVATE_KEY="$(pwd)/id_rsa"
-export BOSH_CA_CERT="$(pwd)/fil-cacert.pem"
-export BOSH_CLIENT=director
-export BOSH_ENVIRONMENT=https://${DEPLOY_ENV}-bosh.${REGION}.fid-intl.com
+# Vars required for this script
+: "${BOSH_HOST}"
+: "${BOSH_VCAP_PASS}"
+: "${BOSH_CLIENT_SECRET}"
+: "${TARGET_DIRECTORY}"
+
+# Suffix to add to the files generated
+export DATA_FILE_SUFFIX="${DATA_FILE_SUFFIX:-}"
+
+export BOSH_GW_USER=${BOSH_GW_USER:-vcap}
+export BOSH_GW_HOST="${BOSH_GW_HOST:-${BOSH_HOST}}" # Assign the same to fail if missing
+export BOSH_CLIENT="${BOSH_CLIENT:-director}"
+export BOSH_ENVIRONMENT="${BOSH_ENVIRONMENT:-https://${BOSH_HOST}}"
+export BOSH_CA_CERT="${BOSH_CA_CERT:-}"
+
+# It would generate it if it does not exist
+export BOSH_GW_PRIVATE_KEY="${BOSH_GW_PRIVATE_KEY:-$(pwd)/id_rsa}"
 
 # Be sure there is no proxy stuff
 export HTTP_PROXY=
@@ -75,6 +77,6 @@ bosh \
     \";
 "
 mkdir -p "${TARGET_DIRECTORY}"
-bosh scp -d cf_databases ccdb/0:/tmp/app_usage_events.csv "${TARGET_DIRECTORY}/app_usage_events_${REGION}_${DEPLOY_ENV}.csv"
-bosh scp -d cf_databases ccdb/0:/tmp/organizations.csv "${TARGET_DIRECTORY}/organizations_${REGION}_${DEPLOY_ENV}.csv"
-bosh scp -d cf_databases ccdb/0:/tmp/existing_apps.csv "${TARGET_DIRECTORY}/existing_apps_${REGION}_${DEPLOY_ENV}.csv"
+bosh scp -d cf_databases ccdb/0:/tmp/app_usage_events.csv "${TARGET_DIRECTORY}/app_usage_events${DATA_FILE_SUFFIX}.csv"
+bosh scp -d cf_databases ccdb/0:/tmp/organizations.csv "${TARGET_DIRECTORY}/organizations${DATA_FILE_SUFFIX}.csv"
+bosh scp -d cf_databases ccdb/0:/tmp/existing_apps.csv "${TARGET_DIRECTORY}/existing_apps${DATA_FILE_SUFFIX}.csv"
