@@ -11,6 +11,18 @@ the data exposed by the endpoint [`/app_usage_events`](https://docs.cloudfoundry
 
  * We dump all the data from the environments using bosh2+ssh+psql and import it in a PostgresSQL running on docker.
 
+Disclaimer
+----------
+
+**Important**: This is a temporary implementation we built as an alternative to cf-abacus, which was far too complicated for our use case.
+We needed something to get a report ASAP, but the implementation is not as elegant and clean as we would like to have.
+
+Although we are using it to generate our real reports, we recommend you to review it before using it.
+
+We share it because we were not able to find too much info about the topic,
+and because the logic described in this repo might help other members of the
+community.
+
 Usage
 -----
 
@@ -19,7 +31,23 @@ Usage
 To download the data and run the report use `make`:
 
  * Run `make` to get help
- * Run `make all` to run everything.
+
+For example:
+
+```
+# Download the CF data directly from ccdb
+make download_usage render_load_usage_data_sql \
+   BOSH_HOST=.... BOSH_CLIENT_SECRET=... BOSH_VCAP_PASS=....
+
+# Load the data in a psql
+make restart_postgresql
+make init_schema load_data_on_psql
+
+# Generate the report
+make generate_report_on_psql stop_postgresql
+
+```
+
 
 Important files and how to work to modify this
 -----------------------------------------------
@@ -31,13 +59,12 @@ The main files are:
    - Not to be called directly
    - This script is intended to use in a docker with bosh2, sshpass, etc.
    - It would connect to a bosh2 to do `bosh ssh` into ccdb to export all data as CSV files.
- * `download_all_usage.sh`: Will iterate across each environment, get the credentials and call  `fetch_usage_from_ccdb.sh`
  * `generate_app_usage_report.sql`: Where all the logic resides, as described below. Writes to `data/report.csv`
 
 
 To play around with the data in the `psql`:
 
- 1. Download all the data with `make download_usage`
+ 1. Download the data
  2. Start posgresql `make start_postgresql`
  3. Import the data `make load_data_on_psql`
  4. Start a psql: `make run_psql`
@@ -88,7 +115,9 @@ Adding usage of existing apps without events
 
 It can happen that an app has been running constantly without any usage event in the last month.
 
-We must aggregate those too. For that, we query the table `processes` to get a list of all
-the existing apps. Later, in the computation, we check which apps have no events, and add
-a "fake event" at the begging of the window for it.
+We cover 3 cases:
+ - There is an event before the window: We pick the value of current usage of that event
+ - There is an event after the window: We pick the value of previous usage of that event
+ - There is no events at all: we create the table `existing_apps` to get a list of all
+   the existing apps. We will add any app that has no events with a `create_at` before the window.
 
