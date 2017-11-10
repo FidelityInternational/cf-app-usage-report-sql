@@ -1,6 +1,13 @@
 POSTGRES_DOCKER_IMAGE:=postgres:9.6.3-alpine
 PWD:=$(shell pwd)
-USAGE_SQL_FILE:=./load_usage_from_csv_into_sql.sql
+
+# Directory where to find the data files to import in DB
+# Used to render the ${USAGE_SQL_FILE}
+DATA_DIR:='./data'
+# Suffix to match in datafiles. For instance: '*-prod'
+DATA_FILE_SUFFIX_BLOB='*'
+# SQL file that would Generated
+USAGE_SQL_FILE:='./data/load_usage_from_csv_into_sql.sql'
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:[^=].*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -15,6 +22,10 @@ test: ### Run the unit tests of the report
 download_usage: ### Download all the usage data from every environment using bosh2+ssh
 	./download_all_usage.sh uk
 	ls -l data/
+	make render_load_usage_data_sql
+
+render_load_usage_data_sql: ## Renders ${USAGE_SQL_FILE} based on the files in ${DATA_DIR} that match the ${DATA_FILE_SUFFIX_BLOB} pattern
+	./render_load_usage_data_sql.sh ${DATA_DIR} ${DATA_FILE_SUFFIX_BLOB} | tee ${USAGE_SQL_FILE}
 
 restart_postgresql: stop_postgresql ### Restart a postgresql server on docker
 	docker run -d \
