@@ -3,8 +3,8 @@ CF app-usage-report using SQL directly
 
 This repository contain a rough implementation of a CF usage report implemented in SQL directly.
 
-The goal of this repo is generate the reports as done in https://***REMOVED***/usage-reports/browse
-in the most quick and simple way possible:
+The goal of this repo is generate the reports, as done in our private
+git repostiory `usage-reports`, in the most quick and simple way possible:
 
  * We rely on a series of SQL queries to sum all the events from a copy of the data from the table `app_usage_events` of the CF CloudController, which is
 the data exposed by the endpoint [`/app_usage_events`](https://docs.cloudfoundry.org/running/managing-cf/usage-events.html).
