@@ -45,7 +45,6 @@ make init_schema load_data_on_psql
 
 # Generate the report
 make generate_report_on_psql stop_postgresql
-
 ```
 
 

@@ -14,16 +14,10 @@ help:
 	@echo "Parameters:"
 	@grep -E '^[a-zA-Z0-9_-]+:=.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = "#?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-all: download_all_usage render_load_usage_data_sql restart_postgresql init_schema load_data_on_psql generate_report_on_psql stop_postgresql ### Do all: download data, generate report
+all: render_load_usage_data_sql restart_postgresql init_schema load_data_on_psql generate_report_on_psql stop_postgresql ### Do all: start the psql, init schemas, generate report, etc... you must get the data first at least once with download_usage.
 
 test: ### Run the unit tests of the report
 	./tests/report_generation.sh
-
-download_all_usage: ### Download all the usage data from every environment using bosh2+ssh using the cf-utils-pipeline script
-	rm -f data/*.csv
-	../cf-utils-pipeline/scripts/app-usage-sql/download.sh uk
-	ls -l data/
-	make render_load_usage_data_sql
 
 download_usage: ### Download usage data from a bosh environment
 	$(if ${BOSH_HOST},,$(error Must pass DEPLOY_ENV=<name>))
