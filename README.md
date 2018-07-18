@@ -99,7 +99,7 @@ The idea is as follows, to sum the usage **per app `app_guid`**
  * For each event `e[n]` in `E`, sum the result of:
 	- Add the usage from `e[n].created_at` to `t_end`
 		- `current_usage=(e[n].current_usage_gb * e[n].current_usage_gb) * (t_end - e(n).created_at)`
-	- Substract the usage from `e(n).created_at` to `t_end`
+	- Subtract the usage from `e(n).created_at` to `t_end`
 		- `previous_usage=(e[n].previous_usage_gb * e[n].previous_usage_gb) * (t_end - e(n).created_at)`
 
  * Add the usage that has been carried on from events BEFORE `t_start`, for ALL the windows.
