@@ -47,11 +47,19 @@ ssh_init() {
 trap ssh_cleanup EXIT
 ssh_init
 
+PSQL_PATH=$(bosh ssh -d cf_databases ccdb/0 'find /var/vcap/ -name psql' | grep psql | awk {'print $4'})
+if [ -n "${PSQL_PATH}" ]; then
+  echo "PSQL Found at ${PSQL_PATH}"
+else
+  echo "Failed to find psql binary - Code might need fixing. Exiting!! "
+  exit 1
+fi
+
 PSQL_URL=postgresql://localhost:3306/cloud_controller
 bosh \
     ssh -d cf_databases ccdb/0 "
     sudo -u vcap -i \
-    /var/vcap/packages/postgres-9.6.8/bin/psql ${PSQL_URL} \
+    ${PSQL_PATH} ${PSQL_URL} \
     -c \"
         COPY (SELECT guid, created_at, instance_count, memory_in_mb_per_instance, state, app_guid, app_name, space_guid, space_name, org_guid, buildpack_guid, buildpack_name, package_state, parent_app_name, parent_app_guid, process_type, task_guid, task_name, package_guid, previous_state, previous_package_state, previous_memory_in_mb_per_instance, previous_instance_count FROM app_usage_events) TO '/tmp/app_usage_events.csv';
         COPY (SELECT guid, created_at, updated_at, name, billing_enabled, quota_definition_id, status, default_isolation_segment_guid FROM organizations) TO '/tmp/organizations.csv';
