@@ -47,8 +47,9 @@ ssh_init() {
 trap ssh_cleanup EXIT
 ssh_init
 
-PSQL_PATH=$(bosh ssh -d cf_databases ccdb/0 'find /var/vcap/ -name psql' | grep psql | awk {'print $4'})
+PSQL_PATH=$(bosh ssh -d cf_databases ccdb/0 'find -L /var/vcap/packages -name psql' | grep psql | awk '{print $4}')
 if [ -n "${PSQL_PATH}" ]; then
+  PSQL_PATH=$(echo "${PSQL_PATH}" | tr -dc '[:print:]')
   echo "PSQL Found at ${PSQL_PATH}"
 else
   echo "Failed to find psql binary - Code might need fixing. Exiting!! "
