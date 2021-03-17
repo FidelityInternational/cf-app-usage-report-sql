@@ -1,4 +1,3 @@
-POSTGRES_DOCKER_IMAGE:=postgres:9.6.3-alpine
 PWD:=$(shell pwd)
 
 # Directory where to find the data files to import in DB
